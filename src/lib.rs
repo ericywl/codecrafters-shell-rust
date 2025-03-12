@@ -13,6 +13,9 @@ enum Command {
     #[strum(serialize = "echo")]
     Echo,
 
+    #[strum(serialize = "type")]
+    Type,
+
     #[strum(disabled)]
     Custom(String),
 }
@@ -29,7 +32,8 @@ impl Command {
         match self {
             Self::Exit => builtin::exit(args),
             Self::Echo => builtin::echo(args),
-            Self::Custom(c) => Command::command_not_found(c),
+            Self::Type => builtin::type_cmd(args),
+            Self::Custom(c) => Self::command_not_found(c),
         }
     }
 
