@@ -28,7 +28,7 @@ impl Command {
     fn execute(&self, args: &[&str]) -> anyhow::Result<()> {
         match self {
             Self::Exit => builtin::exit(args),
-            Self::Echo => !todo!(),
+            Self::Echo => builtin::echo(args),
             Self::Custom(c) => Command::command_not_found(c),
         }
     }

@@ -1,6 +1,8 @@
 use std::process::{self};
 
-pub fn exit(args: &[&str]) -> anyhow::Result<()> {
+use crate::write_output_and_flush;
+
+pub(crate) fn exit(args: &[&str]) -> anyhow::Result<()> {
     let code = match args.first() {
         Some(arg) => match arg.parse::<i32>() {
             Ok(c) => c,
@@ -10,4 +12,8 @@ pub fn exit(args: &[&str]) -> anyhow::Result<()> {
     };
 
     process::exit(code)
+}
+
+pub(crate) fn echo(args: &[&str]) -> anyhow::Result<()> {
+    write_output_and_flush(args.join(" ").into())
 }
