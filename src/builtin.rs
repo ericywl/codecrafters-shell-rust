@@ -20,6 +20,9 @@ pub(crate) enum Command {
     #[strum(serialize = "type")]
     Type,
 
+    #[strum(serialize = "pwd")]
+    Pwd,
+
     #[strum(disabled)]
     Executable { name: String },
 }
@@ -39,6 +42,7 @@ impl Command {
             Self::Exit => Self::exit(args),
             Self::Echo => Self::echo(args),
             Self::Type => Self::type_cmd(args),
+            Self::Pwd => Self::pwd(args),
             Self::Executable { name } => match Self::find_executable_in_path(&name) {
                 Some(path) => Self::exec(name, path, args),
                 None => Self::command_not_found(&name),
@@ -62,7 +66,7 @@ impl Command {
 
     /// echo prints the same message back.
     fn echo(args: &[&str]) -> anyhow::Result<()> {
-        write_output_and_flush(args.join(" ").into())
+        write_output_and_flush(args.join(" ").as_bytes())
     }
 
     /// type prints if command is a shell builtin, executable in `$PATH`` or unknown command.
@@ -82,8 +86,13 @@ impl Command {
             outputs.push(output);
         }
 
-        write_output_and_flush(outputs.join("\n").into())?;
+        write_output_and_flush(outputs.join("\n").as_bytes())?;
         Ok(())
+    }
+
+    fn pwd(_: &[&str]) -> anyhow::Result<()> {
+        let path = env::current_dir().context("failed to get current dir")?;
+        write_output_and_flush(path.into_os_string().as_encoded_bytes())
     }
 
     fn exec(name: &str, path: PathBuf, args: &[&str]) -> anyhow::Result<()> {
@@ -100,7 +109,7 @@ impl Command {
     }
 
     fn command_not_found(command: &str) -> anyhow::Result<()> {
-        write_output_and_flush(format!("{command}: command not found").into())
+        write_output_and_flush(format!("{command}: command not found").as_bytes())
     }
 
     fn find_executable_in_path(name: &str) -> Option<PathBuf> {

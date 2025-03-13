@@ -4,10 +4,12 @@ use anyhow::Context;
 
 mod builtin;
 
-fn write_output_and_flush(mut buf: Vec<u8>) -> anyhow::Result<()> {
-    buf.push(b'\n');
-    let mut stdout = io::stdout();
+fn write_output_and_flush(buf: &[u8]) -> anyhow::Result<()> {
+    let mut stdout = io::stdout().lock();
     stdout.write_all(&buf).context("failed to write output")?;
+    stdout
+        .write_all("\n".as_bytes())
+        .context("failed to write newline")?;
     stdout.flush().context("failed to flush output")
 }
 
