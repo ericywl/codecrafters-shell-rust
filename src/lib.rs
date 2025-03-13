@@ -1,46 +1,8 @@
 use std::io::{self, Write};
 
 use anyhow::Context;
-use strum::EnumString;
 
 mod builtin;
-
-#[derive(Debug, PartialEq, EnumString)]
-enum Command {
-    #[strum(serialize = "exit")]
-    Exit,
-
-    #[strum(serialize = "echo")]
-    Echo,
-
-    #[strum(serialize = "type")]
-    Type,
-
-    #[strum(disabled)]
-    Custom(String),
-}
-
-impl Command {
-    fn parse(command: &str) -> Self {
-        match Command::try_from(command) {
-            Ok(cmd) => cmd,
-            Err(_) => Self::Custom(command.to_owned()),
-        }
-    }
-
-    fn execute(&self, args: &[&str]) -> anyhow::Result<()> {
-        match self {
-            Self::Exit => builtin::exit(args),
-            Self::Echo => builtin::echo(args),
-            Self::Type => builtin::type_cmd(args),
-            Self::Custom(c) => Self::command_not_found(c),
-        }
-    }
-
-    fn command_not_found(command: &str) -> anyhow::Result<()> {
-        write_output_and_flush(format!("{command}: command not found").into())
-    }
-}
 
 fn write_output_and_flush(mut buf: Vec<u8>) -> anyhow::Result<()> {
     buf.push(b'\n');
@@ -74,7 +36,7 @@ pub fn repl() -> anyhow::Result<()> {
         let command = iter.next();
         let args: Vec<_> = iter.collect();
         let command = match command {
-            Some(command) => Command::parse(command),
+            Some(command) => builtin::Command::parse(command),
             None => continue,
         };
 
