@@ -4,6 +4,7 @@ use std::{
     process::{self},
 };
 
+use anyhow::Context;
 use strum::EnumString;
 
 use crate::write_output_and_flush;
@@ -38,10 +39,15 @@ impl Command {
             Self::Exit => Self::exit(args),
             Self::Echo => Self::echo(args),
             Self::Type => Self::type_cmd(args),
-            Self::Executable { name } => Self::command_not_found(name),
+            Self::Executable { name } => match Self::find_executable_in_path(&name) {
+                Some(path) => Self::exec(name, path, args),
+                None => Self::command_not_found(&name),
+            },
         }
     }
 
+    /// exit terminates the shell with specified code.
+    /// If the argument is invalid, code is set to 0 instead.
     fn exit(args: &[&str]) -> anyhow::Result<()> {
         let code = match args.first() {
             Some(arg) => match arg.parse::<i32>() {
@@ -54,10 +60,15 @@ impl Command {
         process::exit(code)
     }
 
+    /// echo prints the same message back.
     fn echo(args: &[&str]) -> anyhow::Result<()> {
         write_output_and_flush(args.join(" ").into())
     }
 
+    /// type prints if command is a shell builtin, executable in `$PATH`` or unknown command.
+    ///  - If command is a shell builtin: `<command> is a shell builtin`.
+    ///  - If command is an executable in PATH: `<command> is <path>`.
+    ///  - If command is unknown: `<command>: not found`.
     fn type_cmd(args: &[&str]) -> anyhow::Result<()> {
         let mut outputs = Vec::new();
         for &arg in args {
@@ -72,6 +83,19 @@ impl Command {
         }
 
         write_output_and_flush(outputs.join("\n").into())?;
+        Ok(())
+    }
+
+    fn exec(name: &str, path: PathBuf, args: &[&str]) -> anyhow::Result<()> {
+        let mut child = process::Command::new(name)
+            .args(args)
+            .spawn()
+            .context(format!(
+                "failed to execute program {name} ({})",
+                path.display()
+            ))?;
+
+        child.wait().context("failed to wait for spawned child")?;
         Ok(())
     }
 
