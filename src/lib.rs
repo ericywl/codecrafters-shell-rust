@@ -203,7 +203,7 @@ mod test {
 
     #[test]
     fn test_parse_args_double_quoted() {
-        let args = parse_args("\"quz  hello\"  \"bar\"");
+        let args = parse_args(r#""quz  hello"  "bar""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["quz  hello", "bar"]);
@@ -219,15 +219,15 @@ mod test {
 
     #[test]
     fn test_parse_args_backslash() {
-        let args = parse_args("world\\ \\ \\ \\\\\\ \\ \\ script");
+        let args = parse_args(r#"world\ \ \ \\\ \ \ script"#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec!["world   \\   script"]);
+        assert_eq!(args, vec![r#"world   \   script"#]);
     }
 
     #[test]
     fn test_parse_args_backslash_in_single_quoted() {
-        let args = parse_args("'world\\ \\script'");
+        let args = parse_args(r#"'example\"testhello\"shell'"#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["world\\ \\script"]);
@@ -235,17 +235,17 @@ mod test {
 
     #[test]
     fn test_parse_args_backslash_in_double_quoted() {
-        let args = parse_args("\"before\\   after\"");
+        let args = parse_args(r#""before\   after""#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec!["before\\   after"]);
+        assert_eq!(args, vec![r#"before\   after"#]);
     }
 
     #[test]
     fn test_parse_args_backslash_before_quotes() {
-        let args = parse_args("\\'\\\"hello script\\\"\\'");
+        let args = parse_args(r#"\'\"hello script\"\'"#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec!["'\"hello", "script\"'"]);
+        assert_eq!(args, vec![r#"'"hello"#, r#"script"'"#]);
     }
 }
