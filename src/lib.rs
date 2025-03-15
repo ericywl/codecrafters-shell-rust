@@ -53,36 +53,77 @@ pub fn repl() -> anyhow::Result<()> {
 fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
     let args_str = args_str.trim();
     let mut args: Vec<String> = Vec::new();
-    let mut in_single_quotes = false;
-    let mut prev_end_quote_idx: Option<usize> = None;
     let mut start_idx = 0;
+    let mut in_single_quotes = false;
+    let mut prev_single_end_quote_idx: Option<usize> = None;
+    let mut in_double_quotes = false;
+    let mut prev_double_end_quote_idx: Option<usize> = None;
     for (idx, c) in args_str.char_indices() {
         match c {
+            '"' => {
+                // Treat double quotes as per normal if we are in single quotes
+                if in_single_quotes {
+                    continue;
+                }
+
+                in_double_quotes = !in_double_quotes;
+                if in_double_quotes {
+                    start_idx = idx;
+                    continue;
+                }
+
+                let arg = &args_str[start_idx + 1..idx];
+                if !arg.is_empty() {
+                    match prev_double_end_quote_idx {
+                        // Combine two double quoted strings e.g.
+                        // `"hello""world"` => `helloworld`
+                        Some(pdeq_idx) => {
+                            if pdeq_idx == start_idx - 1 {
+                                let len = args.len();
+                                args[len - 1].push_str(&arg);
+                            } else {
+                                args.push(arg.to_owned())
+                            }
+                        }
+                        None => args.push(arg.to_owned()),
+                    };
+                    prev_double_end_quote_idx = Some(idx);
+                }
+                start_idx = idx + 1;
+            }
             '\'' => {
+                // Treat single quotes as per normal if we are in double quotes
+                if in_double_quotes {
+                    continue;
+                }
+
                 in_single_quotes = !in_single_quotes;
                 if in_single_quotes {
                     start_idx = idx;
-                } else {
-                    let arg = &args_str[start_idx + 1..idx];
-                    if !arg.is_empty() {
-                        match prev_end_quote_idx {
-                            Some(peq_idx) => {
-                                if peq_idx == start_idx - 1 {
-                                    let len = args.len();
-                                    args[len - 1].push_str(&arg);
-                                } else {
-                                    args.push(arg.to_owned())
-                                }
-                            }
-                            None => args.push(arg.to_owned()),
-                        };
-                        prev_end_quote_idx = Some(idx);
-                    }
-                    start_idx = idx + 1;
+                    continue;
                 }
+
+                let arg = &args_str[start_idx + 1..idx];
+                if !arg.is_empty() {
+                    match prev_single_end_quote_idx {
+                        // Combine two single quoted strings e.g.
+                        // `'hello''world'` => `helloworld`
+                        Some(pseq_idx) => {
+                            if pseq_idx == start_idx - 1 {
+                                let len = args.len();
+                                args[len - 1].push_str(&arg);
+                            } else {
+                                args.push(arg.to_owned())
+                            }
+                        }
+                        None => args.push(arg.to_owned()),
+                    };
+                    prev_single_end_quote_idx = Some(idx);
+                }
+                start_idx = idx + 1;
             }
             _ if c.is_whitespace() => {
-                if !in_single_quotes {
+                if !in_single_quotes && !in_double_quotes {
                     let arg = &args_str[start_idx..idx];
                     if !arg.is_empty() {
                         args.push(arg.to_owned());
@@ -127,7 +168,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_args_whitespace_in_quotes() {
+    fn test_parse_args_single_quoted() {
         let args = parse_args("'script    shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
@@ -135,7 +176,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_args_whitespace_between_two_quotes() {
+    fn test_parse_args_whitespace_between_single_quoted() {
         let args = parse_args("' script '   ' shell '");
         assert!(args.is_ok());
         let args = args.unwrap();
@@ -143,10 +184,26 @@ mod test {
     }
 
     #[test]
-    fn test_parse_args_no_space_between_two_quotes() {
+    fn test_parse_args_no_space_between_single_quoted() {
         let args = parse_args("' script''shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![" scriptshell"]);
+    }
+
+    #[test]
+    fn test_parse_args_double_quoted() {
+        let args = parse_args("\"quz  hello\"  \"bar\"");
+        assert!(args.is_ok());
+        let args = args.unwrap();
+        assert_eq!(args, vec!["quz  hello", "bar"]);
+    }
+
+    #[test]
+    fn test_parse_args_single_quoted_in_double_quoted() {
+        let args = parse_args("\"'quz''hello'\"");
+        assert!(args.is_ok());
+        let args = args.unwrap();
+        assert_eq!(args, vec!["'quz''hello'"]);
     }
 }
