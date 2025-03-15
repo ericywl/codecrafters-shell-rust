@@ -63,8 +63,6 @@ fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
 
     for (idx, ch) in args_str.char_indices() {
         match ch {
-            // If backslash is escaped or in single quotes, treat it as per normal char
-            '\\' if !escaped && !in_single_quotes && !in_double_quotes => escaped = true,
             // If double quote is in single quotes or escaped, treat it as per normal
             '"' if !in_single_quotes && !escaped => {
                 in_double_quotes = !in_double_quotes;
@@ -126,6 +124,8 @@ fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
                 }
                 start_idx = idx + 1;
             }
+            // If backslash is escaped or in single quotes, treat it as per normal char
+            '\\' if !escaped && !in_single_quotes => escaped = true,
             _ => {
                 if escaped {
                     escaped = false
@@ -230,22 +230,30 @@ mod test {
         let args = parse_args(r#"'example\"testhello\"shell'"#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec!["world\\ \\script"]);
+        assert_eq!(args, vec![r#"example\"testhello\"shell"#]);
     }
 
     #[test]
     fn test_parse_args_backslash_in_double_quoted() {
-        let args = parse_args(r#""before\   after""#);
+        let args = parse_args(r#""hello'script'\\n'world""#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec![r#"before\   after"#]);
+        assert_eq!(args, vec![r#"hello'script'\n'world"#]);
     }
 
     #[test]
     fn test_parse_args_backslash_before_quotes() {
-        let args = parse_args(r#"\'\"hello script\"\'"#);
+        let args = parse_args(r#""hello\"insidequotes"script\""#);
         assert!(args.is_ok());
         let args = args.unwrap();
-        assert_eq!(args, vec![r#"'"hello"#, r#"script"'"#]);
+        assert_eq!(args, vec![r#"hello"insidequotes"#, r#"script""#]);
+    }
+
+    #[test]
+    fn test_parse_args_backslash_before_newline_in_double_quoted() {
+        let args = parse_args(r#""hello'script'\\n'world""#);
+        assert!(args.is_ok());
+        let args = args.unwrap();
+        assert_eq!(args, vec![r#"hello'script'\n'world"#]);
     }
 }
