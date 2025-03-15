@@ -108,8 +108,9 @@ impl Command {
             return Ok(());
         }
 
-        if env::set_current_dir(args[0]).is_err() {
-            write_and_flush_str(&format!("cd: {}: No such file or directory", args[0]))?;
+        let dir = Self::replace_with_home_dir(args[0]);
+        if env::set_current_dir(&dir).is_err() {
+            write_and_flush_str(&format!("cd: {}: No such file or directory", dir))?;
         }
         Ok(())
     }
@@ -168,5 +169,32 @@ impl Command {
         }
 
         None
+    }
+
+    fn home_dir() -> String {
+        match env::var("HOME") {
+            Ok(home) => home,
+            Err(_) => "".into(),
+        }
+    }
+
+    fn replace_with_home_dir(path: &str) -> String {
+        match path.split_once('/') {
+            Some((a, b)) => {
+                if a == "~" {
+                    // Replace '~' with HOME dir
+                    format!("{}/{}", Self::home_dir(), b)
+                } else {
+                    path.into()
+                }
+            }
+            None => {
+                if path == "~" {
+                    Self::home_dir()
+                } else {
+                    path.into()
+                }
+            }
+        }
     }
 }
