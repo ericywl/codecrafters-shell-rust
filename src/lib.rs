@@ -4,7 +4,7 @@ use anyhow::Context;
 
 mod builtin;
 
-fn write_output_and_flush(buf: &[u8]) -> anyhow::Result<()> {
+fn write_and_flush_buf(buf: &[u8]) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(&buf).context("failed to write output")?;
     stdout
@@ -13,7 +13,11 @@ fn write_output_and_flush(buf: &[u8]) -> anyhow::Result<()> {
     stdout.flush().context("failed to flush output")
 }
 
-fn prompt_and_read_input() -> anyhow::Result<String> {
+fn write_and_flush_str(s: &str) -> anyhow::Result<()> {
+    write_and_flush_buf(s.as_bytes())
+}
+
+fn prompt_and_read() -> anyhow::Result<String> {
     let mut stdout = io::stdout();
     stdout
         .write_all("$ ".as_bytes())
@@ -31,7 +35,7 @@ fn prompt_and_read_input() -> anyhow::Result<String> {
 
 pub fn repl() -> anyhow::Result<()> {
     loop {
-        let input = prompt_and_read_input()?;
+        let input = prompt_and_read()?;
 
         // Parse command
         let mut iter = input.split_whitespace();

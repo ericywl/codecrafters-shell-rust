@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use strum::EnumString;
 
-use crate::write_output_and_flush;
+use crate::{write_and_flush_buf, write_and_flush_str};
 
 #[derive(Debug, PartialEq, EnumString)]
 pub(crate) enum Command {
@@ -22,6 +22,9 @@ pub(crate) enum Command {
 
     #[strum(serialize = "pwd")]
     Pwd,
+
+    #[strum(serialize = "cd")]
+    Cd,
 
     #[strum(disabled)]
     Executable { name: String },
@@ -43,6 +46,7 @@ impl Command {
             Self::Echo => Self::echo(args),
             Self::Type => Self::type_cmd(args),
             Self::Pwd => Self::pwd(args),
+            Self::Cd => Self::cd(args),
             Self::Executable { name } => match Self::find_executable_in_path(&name) {
                 Some(path) => Self::exec(name, path, args),
                 None => Self::command_not_found(&name),
@@ -66,7 +70,7 @@ impl Command {
 
     /// echo prints the same message back.
     fn echo(args: &[&str]) -> anyhow::Result<()> {
-        write_output_and_flush(args.join(" ").as_bytes())
+        write_and_flush_str(&args.join(" "))
     }
 
     /// type prints if command is a shell builtin, executable in `$PATH`` or unknown command.
@@ -86,13 +90,28 @@ impl Command {
             outputs.push(output);
         }
 
-        write_output_and_flush(outputs.join("\n").as_bytes())?;
+        write_and_flush_str(&outputs.join("\n"))?;
         Ok(())
     }
 
     fn pwd(_: &[&str]) -> anyhow::Result<()> {
         let path = env::current_dir().context("failed to get current dir")?;
-        write_output_and_flush(path.into_os_string().as_encoded_bytes())
+        write_and_flush_buf(path.into_os_string().as_encoded_bytes())
+    }
+
+    fn cd(args: &[&str]) -> anyhow::Result<()> {
+        if args.len() == 0 {
+            return Ok(());
+        }
+        if args.len() > 1 {
+            write_and_flush_str("cd: too many arguments")?;
+            return Ok(());
+        }
+
+        if env::set_current_dir(args[0]).is_err() {
+            write_and_flush_str(&format!("cd: {}: No such file or directory", args[0]))?;
+        }
+        Ok(())
     }
 
     fn exec(name: &str, path: PathBuf, args: &[&str]) -> anyhow::Result<()> {
@@ -109,7 +128,7 @@ impl Command {
     }
 
     fn command_not_found(command: &str) -> anyhow::Result<()> {
-        write_output_and_flush(format!("{command}: command not found").as_bytes())
+        write_and_flush_str(&format!("{command}: command not found"))
     }
 
     fn find_executable_in_path(name: &str) -> Option<PathBuf> {
