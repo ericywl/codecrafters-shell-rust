@@ -40,7 +40,7 @@ impl Command {
         }
     }
 
-    pub(crate) fn execute(&self, args: &[&str]) -> anyhow::Result<()> {
+    pub(crate) fn execute(&self, args: &[String]) -> anyhow::Result<()> {
         match self {
             Self::Exit => Self::exit(args),
             Self::Echo => Self::echo(args),
@@ -56,7 +56,7 @@ impl Command {
 
     /// exit terminates the shell with specified code.
     /// If the argument is invalid, code is set to 0 instead.
-    fn exit(args: &[&str]) -> anyhow::Result<()> {
+    fn exit(args: &[String]) -> anyhow::Result<()> {
         let code = match args.first() {
             Some(arg) => match arg.parse::<i32>() {
                 Ok(c) => c,
@@ -69,7 +69,7 @@ impl Command {
     }
 
     /// echo prints the same message back.
-    fn echo(args: &[&str]) -> anyhow::Result<()> {
+    fn echo(args: &[String]) -> anyhow::Result<()> {
         write_and_flush_str(&args.join(" "))
     }
 
@@ -77,10 +77,10 @@ impl Command {
     ///  - If command is a shell builtin: `<command> is a shell builtin`.
     ///  - If command is an executable in PATH: `<command> is <path>`.
     ///  - If command is unknown: `<command>: not found`.
-    fn type_cmd(args: &[&str]) -> anyhow::Result<()> {
+    fn type_cmd(args: &[String]) -> anyhow::Result<()> {
         let mut outputs = Vec::new();
-        for &arg in args {
-            let output = match Self::parse(arg) {
+        for arg in args {
+            let output = match Self::parse(&arg) {
                 Self::Executable { name } => match Self::find_executable_in_path(&name) {
                     Some(path) => format!("{name} is {}", path.display()),
                     None => format!("{name}: not found"),
@@ -94,12 +94,12 @@ impl Command {
         Ok(())
     }
 
-    fn pwd(_: &[&str]) -> anyhow::Result<()> {
+    fn pwd(_: &[String]) -> anyhow::Result<()> {
         let path = env::current_dir().context("failed to get current dir")?;
         write_and_flush_buf(path.into_os_string().as_encoded_bytes())
     }
 
-    fn cd(args: &[&str]) -> anyhow::Result<()> {
+    fn cd(args: &[String]) -> anyhow::Result<()> {
         if args.len() == 0 {
             return Ok(());
         }
@@ -108,14 +108,14 @@ impl Command {
             return Ok(());
         }
 
-        let dir = Self::replace_with_home_dir(args[0]);
+        let dir = Self::replace_with_home_dir(&args[0]);
         if env::set_current_dir(&dir).is_err() {
             write_and_flush_str(&format!("cd: {}: No such file or directory", dir))?;
         }
         Ok(())
     }
 
-    fn exec(name: &str, path: PathBuf, args: &[&str]) -> anyhow::Result<()> {
+    fn exec(name: &str, path: PathBuf, args: &[String]) -> anyhow::Result<()> {
         let mut child = process::Command::new(name)
             .args(args)
             .spawn()
