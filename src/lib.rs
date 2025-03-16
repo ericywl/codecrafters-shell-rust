@@ -1,20 +1,20 @@
 use std::io::{self, Write};
 
 use anyhow::Context;
+use builtin::Output;
 
 mod builtin;
 
-fn write_and_flush_buf(buf: &[u8]) -> anyhow::Result<()> {
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(&buf).context("failed to write output")?;
-    stdout
-        .write_all("\n".as_bytes())
-        .context("failed to write newline")?;
-    stdout.flush().context("failed to flush output")
+fn write_and_flush_buf<T: io::Write>(w: &mut T, buf: &[u8]) -> anyhow::Result<()> {
+    let mut buf = buf.to_owned();
+    buf.push(b'\n');
+
+    w.write_all(&buf).context("failed to write output")?;
+    w.flush().context("failed to flush output")
 }
 
-fn write_and_flush_str(s: &str) -> anyhow::Result<()> {
-    write_and_flush_buf(s.as_bytes())
+fn write_and_flush_str<T: io::Write>(w: &mut T, s: &str) -> anyhow::Result<()> {
+    write_and_flush_buf(w, s.as_bytes())
 }
 
 fn prompt_and_read() -> anyhow::Result<String> {
@@ -40,15 +40,14 @@ pub fn repl() -> anyhow::Result<()> {
         // Parse and execute
         let tokens = match lex_command_and_args(&input) {
             Ok(tokens) => tokens,
-            Err(e) => return write_and_flush_str(&e),
+            Err(e) => return write_and_flush_str(&mut io::stderr(), &e),
         };
-
         let (command, args) = match tokens.split_first() {
             Some(t) => t,
             None => continue,
         };
         let command = builtin::Command::parse(command);
-        command.execute(args)?;
+        command.execute(&mut Output::new(io::stdout(), io::stderr()), args)?;
     }
 }
 

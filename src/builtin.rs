@@ -1,5 +1,5 @@
 use std::{
-    env, fs,
+    env, fs, io,
     path::PathBuf,
     process::{self},
 };
@@ -30,6 +30,21 @@ pub(crate) enum Command {
     Executable { name: String },
 }
 
+pub(crate) struct Output<T, K>
+where
+    T: io::Write,
+    K: io::Write,
+{
+    out: T,
+    err: K,
+}
+
+impl<T: io::Write, K: io::Write> Output<T, K> {
+    pub(crate) fn new(out: T, err: K) -> Self {
+        Self { out, err }
+    }
+}
+
 impl Command {
     pub(crate) fn parse(command: &str) -> Self {
         match Self::try_from(command) {
@@ -40,23 +55,31 @@ impl Command {
         }
     }
 
-    pub(crate) fn execute(&self, args: &[String]) -> anyhow::Result<()> {
+    pub(crate) fn execute<T, K>(&self, w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
         match self {
-            Self::Exit => Self::exit(args),
-            Self::Echo => Self::echo(args),
-            Self::Type => Self::type_cmd(args),
-            Self::Pwd => Self::pwd(args),
-            Self::Cd => Self::cd(args),
+            Self::Exit => Self::exit(w, args),
+            Self::Echo => Self::echo(w, args),
+            Self::Type => Self::type_cmd(w, args),
+            Self::Pwd => Self::pwd(w, args),
+            Self::Cd => Self::cd(w, args),
             Self::Executable { name } => match Self::find_executable_in_path(&name) {
-                Some(path) => Self::exec(name, path, args),
-                None => Self::command_not_found(&name),
+                Some(path) => Self::exec(w, name, path, args),
+                None => Self::command_not_found(&mut w.err, &name),
             },
         }
     }
 
     /// exit terminates the shell with specified code.
     /// If the argument is invalid, code is set to 0 instead.
-    fn exit(args: &[String]) -> anyhow::Result<()> {
+    fn exit<T, K>(_: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
         let code = match args.first() {
             Some(arg) => match arg.parse::<i32>() {
                 Ok(c) => c,
@@ -69,15 +92,23 @@ impl Command {
     }
 
     /// echo prints the same message back.
-    fn echo(args: &[String]) -> anyhow::Result<()> {
-        write_and_flush_str(&args.join(" "))
+    fn echo<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
+        write_and_flush_str(&mut w.out, &args.join(" "))
     }
 
     /// type prints if command is a shell builtin, executable in `$PATH`` or unknown command.
     ///  - If command is a shell builtin: `<command> is a shell builtin`.
     ///  - If command is an executable in PATH: `<command> is <path>`.
     ///  - If command is unknown: `<command>: not found`.
-    fn type_cmd(args: &[String]) -> anyhow::Result<()> {
+    fn type_cmd<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
         let mut outputs = Vec::new();
         for arg in args {
             let output = match Self::parse(&arg) {
@@ -90,46 +121,71 @@ impl Command {
             outputs.push(output);
         }
 
-        write_and_flush_str(&outputs.join("\n"))?;
+        write_and_flush_str(&mut w.out, &outputs.join("\n"))?;
         Ok(())
     }
 
-    fn pwd(_: &[String]) -> anyhow::Result<()> {
+    fn pwd<T, K>(w: &mut Output<T, K>, _: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
         let path = env::current_dir().context("failed to get current dir")?;
-        write_and_flush_buf(path.into_os_string().as_encoded_bytes())
+        write_and_flush_buf(&mut w.out, path.into_os_string().as_encoded_bytes())
     }
 
-    fn cd(args: &[String]) -> anyhow::Result<()> {
+    fn cd<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
         if args.len() == 0 {
             return Ok(());
         }
         if args.len() > 1 {
-            write_and_flush_str("cd: too many arguments")?;
+            write_and_flush_str(&mut w.err, "cd: too many arguments")?;
             return Ok(());
         }
 
         let dir = Self::replace_with_home_dir(&args[0]);
         if env::set_current_dir(&dir).is_err() {
-            write_and_flush_str(&format!("cd: {}: No such file or directory", dir))?;
+            write_and_flush_str(
+                &mut w.out,
+                &format!("cd: {}: No such file or directory", dir),
+            )?;
         }
         Ok(())
     }
 
-    fn exec(name: &str, path: PathBuf, args: &[String]) -> anyhow::Result<()> {
-        let mut child = process::Command::new(name)
+    fn exec<T, K>(
+        w: &mut Output<T, K>,
+        name: &str,
+        path: PathBuf,
+        args: &[String],
+    ) -> anyhow::Result<()>
+    where
+        T: io::Write,
+        K: io::Write,
+    {
+        let output = process::Command::new(name)
             .args(args)
-            .spawn()
+            .output()
             .context(format!(
                 "failed to execute program {name} ({})",
                 path.display()
             ))?;
 
-        child.wait().context("failed to wait for spawned child")?;
+        w.out
+            .write_all(&output.stdout)
+            .context("failed to write program output")?;
+        w.err
+            .write_all(&output.stderr)
+            .context("failed to write program errors")?;
         Ok(())
     }
 
-    fn command_not_found(command: &str) -> anyhow::Result<()> {
-        write_and_flush_str(&format!("{command}: command not found"))
+    fn command_not_found<T: io::Write>(w: &mut T, command: &str) -> anyhow::Result<()> {
+        write_and_flush_str(w, &format!("{command}: command not found"))
     }
 
     fn find_executable_in_path(name: &str) -> Option<PathBuf> {
