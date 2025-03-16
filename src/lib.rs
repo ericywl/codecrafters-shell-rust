@@ -36,79 +36,81 @@ fn prompt_and_read() -> anyhow::Result<String> {
 pub fn repl() -> anyhow::Result<()> {
     loop {
         let input = prompt_and_read()?;
-        let (command_str, args_str) = match input.split_once(char::is_whitespace) {
-            Some(splits) => splits,
-            None => continue,
-        };
 
         // Parse and execute
-        let command = builtin::Command::parse(command_str.trim());
-        match parse_args(args_str) {
-            Ok(args) => command.execute(&args)?,
-            Err(e) => write_and_flush_str(&e)?,
+        let tokens = match lex_command_and_args(&input) {
+            Ok(tokens) => tokens,
+            Err(e) => return write_and_flush_str(&e),
         };
+
+        let (command, args) = match tokens.split_first() {
+            Some(t) => t,
+            None => continue,
+        };
+        let command = builtin::Command::parse(command);
+        command.execute(args)?;
     }
 }
 
-fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
-    let args_str = args_str.trim();
-    let mut args: Vec<String> = Vec::new();
-    let mut next_arg = String::new();
-    let mut next_arg_start_idx = 0;
+fn lex_command_and_args(input: &str) -> Result<Vec<String>, String> {
+    let input = input.trim();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut next = String::new();
+    let mut next_start_idx = 0;
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
     let mut prev_end_quote_idx: Option<usize> = None;
     let mut escaped = false;
 
-    for (idx, ch) in args_str.char_indices() {
+    for (idx, ch) in input.char_indices() {
         match ch {
             // If double quote is in single quotes or escaped, treat it as per normal
             '"' if !in_single_quotes && !escaped => {
                 in_double_quotes = !in_double_quotes;
                 if in_double_quotes {
                     // Ignore the starting double quote
-                    next_arg_start_idx = idx;
+                    next_start_idx = idx;
                     continue;
                 }
                 push_next_arg(
-                    &mut args,
-                    &mut next_arg,
-                    next_arg_start_idx,
+                    &mut tokens,
+                    &mut next,
+                    next_start_idx,
                     prev_end_quote_idx.as_ref(),
                 );
                 prev_end_quote_idx = Some(idx);
-                next_arg_start_idx = idx + 1;
+                next_start_idx = idx + 1;
             }
             // If single quote is in double quotes or escaped, treat it as per normal
             '\'' if !in_double_quotes && !escaped => {
                 in_single_quotes = !in_single_quotes;
                 if in_single_quotes {
                     // Ignore the ending double quote
-                    next_arg_start_idx = idx;
+                    next_start_idx = idx;
                     continue;
                 }
                 push_next_arg(
-                    &mut args,
-                    &mut next_arg,
-                    next_arg_start_idx,
+                    &mut tokens,
+                    &mut next,
+                    next_start_idx,
                     prev_end_quote_idx.as_ref(),
                 );
                 prev_end_quote_idx = Some(idx);
-                next_arg_start_idx = idx + 1;
+                next_start_idx = idx + 1;
             }
             // If char is not whitespace or is escaped, treat is as per normal
             _ if (ch.is_whitespace() && !escaped) => {
                 if in_single_quotes || in_double_quotes {
-                    next_arg.push(ch);
+                    next.push(ch);
                     continue;
                 }
                 push_next_arg(
-                    &mut args,
-                    &mut next_arg,
-                    next_arg_start_idx,
+                    &mut tokens,
+                    &mut next,
+                    next_start_idx,
                     prev_end_quote_idx.as_ref(),
                 );
-                next_arg_start_idx = idx + 1;
+                next_start_idx = idx + 1;
             }
             // If backslash is escaped or in single quotes, treat it as per normal char
             '\\' if !escaped && !in_single_quotes => escaped = true,
@@ -117,11 +119,11 @@ fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
                 escaped = false;
                 match ch {
                     // These chars will be escaped
-                    '\\' | '$' | '\n' | '"' => next_arg.push(ch),
+                    '\\' | '$' | '\n' | '"' => next.push(ch),
                     // The rest won't, so we need to restore the backslash
                     _ => {
-                        next_arg.push('\\');
-                        next_arg.push(ch);
+                        next.push('\\');
+                        next.push(ch);
                     }
                 };
             }
@@ -130,7 +132,7 @@ fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
                 if escaped {
                     escaped = false
                 }
-                next_arg.push(ch);
+                next.push(ch);
             }
         }
     }
@@ -140,12 +142,12 @@ fn parse_args(args_str: &str) -> Result<Vec<String>, String> {
     }
 
     push_next_arg(
-        &mut args,
-        &mut next_arg,
-        next_arg_start_idx,
+        &mut tokens,
+        &mut next,
+        next_start_idx,
         prev_end_quote_idx.as_ref(),
     );
-    Ok(args)
+    Ok(tokens)
 }
 
 fn push_next_arg(
@@ -178,124 +180,125 @@ fn push_next_arg(
 }
 
 #[cfg(test)]
-mod test {
-    use crate::parse_args;
+mod lex_command_and_args_test {
+    use crate::lex_command_and_args;
 
     #[test]
-    fn test_parse_args_trailing_whitespace() {
-        let args = parse_args("script  shell  ");
+    fn test_trailing_whitespace() {
+        let args = lex_command_and_args("script  shell  ");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script", "shell"]);
     }
 
     #[test]
-    fn test_parse_args_whitespace_between() {
-        let args = parse_args("script    shell");
+    fn test_whitespace_between() {
+        let args = lex_command_and_args("script    shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script", "shell"]);
     }
 
     #[test]
-    fn test_parse_args_single_quoted() {
-        let args = parse_args("'script    shell'");
+    fn test_single_quoted() {
+        let args = lex_command_and_args("'script    shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script    shell"]);
     }
 
     #[test]
-    fn test_parse_args_whitespace_between_single_quoteds() {
-        let args = parse_args("' script '   ' shell '");
+    fn test_whitespace_between_single_quoteds() {
+        let args = lex_command_and_args("' script '   ' shell '");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![" script ", " shell "]);
     }
 
     #[test]
-    fn test_parse_args_no_space_between_single_quoteds() {
-        let args = parse_args("' script''shell'");
+    fn test_no_space_between_single_quoteds() {
+        let args = lex_command_and_args("' script''shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![" scriptshell"]);
     }
 
     #[test]
-    fn test_parse_args_no_space_between_single_quoted_and_normal() {
-        let args = parse_args("'script'shell");
+    fn test_no_space_between_single_quoted_and_normal() {
+        let args = lex_command_and_args("'script'shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["scriptshell"]);
     }
 
     #[test]
-    fn test_parse_args_double_quoted() {
-        let args = parse_args(r#""quz  hello"  "bar""#);
+    fn test_double_quoted() {
+        let args = lex_command_and_args(r#""quz  hello"  "bar""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["quz  hello", "bar"]);
     }
 
     #[test]
-    fn test_parse_args_no_space_between_double_quoted_and_normal() {
-        let args = parse_args("\"script\"shell");
+    fn test_no_space_between_double_quoted_and_normal() {
+        let args = lex_command_and_args("\"script\"shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["scriptshell"]);
     }
 
     #[test]
-    fn test_parse_args_single_quoted_in_double_quoted() {
-        let args = parse_args("\"'quz''hello'\"");
+    fn test_single_quoted_in_double_quoted() {
+        let args = lex_command_and_args("\"'quz''hello'\"");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["'quz''hello'"]);
     }
 
     #[test]
-    fn test_parse_args_backslash() {
-        let args = parse_args(r#"world\ \ \ \\\ \ \ script"#);
+    fn test_backslash() {
+        let args = lex_command_and_args(r#"world\ \ \ \\\ \ \ script"#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"world   \   script"#]);
     }
 
     #[test]
-    fn test_parse_args_backslash_in_single_quoted() {
-        let args = parse_args(r#"'example\"testhello\"shell'"#);
+    fn test_backslash_in_single_quoted() {
+        let args = lex_command_and_args(r#"'example\"testhello\"shell'"#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"example\"testhello\"shell"#]);
     }
 
     #[test]
-    fn test_parse_args_backslash_in_double_quoted() {
-        let args = parse_args(r#""hello'script'\\n'world""#);
+    fn test_backslash_in_double_quoted() {
+        let args = lex_command_and_args(r#""hello'script'\\n'world""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello'script'\n'world"#]);
     }
 
     #[test]
-    fn test_parse_args_backslash_before_quotes() {
-        let args = parse_args(r#""hello\"insidequotes"script\""#);
+    fn test_backslash_before_quotes() {
+        let args = lex_command_and_args(r#""hello\"insidequotes"script\""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello"insidequotesscript""#]);
     }
 
     #[test]
-    fn test_parse_args_backslash_before_newline_in_double_quoted() {
-        let args = parse_args(r#""hello'script'\\n'world""#);
+    fn test_backslash_before_newline_in_double_quoted() {
+        let args = lex_command_and_args(r#""hello'script'\\n'world""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello'script'\n'world"#]);
     }
 
     #[test]
-    fn test_parse_args_backslash_in_single_quoted_in_double_quoted() {
-        let args = parse_args(r#""/tmp/foo/'f 46'" "/tmp/foo/'f  \80'" "/tmp/foo/'f \84\'""#);
+    fn test_backslash_in_single_quoted_in_double_quoted() {
+        let args =
+            lex_command_and_args(r#""/tmp/foo/'f 46'" "/tmp/foo/'f  \80'" "/tmp/foo/'f \84\'""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(
