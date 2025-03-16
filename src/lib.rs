@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    fs,
+    io::{self, Write},
+};
 
 use anyhow::Context;
 use builtin::Output;
@@ -37,21 +40,110 @@ pub fn repl() -> anyhow::Result<()> {
     loop {
         let input = prompt_and_read()?;
 
-        // Parse and execute
-        let tokens = match lex_command_and_args(&input) {
+        // Tokenize the input
+        let tokens = match tokenize(&input) {
             Ok(tokens) => tokens,
             Err(e) => return write_and_flush_str(&mut io::stderr(), &e),
         };
-        let (command, args) = match tokens.split_first() {
-            Some(t) => t,
+
+        // Split commands and redirects
+        let split = split_tokens(tokens.as_ref());
+
+        // Parse command and execute with arguments
+        let (command, args) = match split.cmd_args.split_first() {
+            Some(ca) => ca,
             None => continue,
         };
         let command = builtin::Command::parse(command);
-        command.execute(&mut Output::new(io::stdout(), io::stderr()), args)?;
+        // Output to buffers so that we can redirect them
+        let (mut out_buf, mut err_buf) = (Vec::new(), Vec::new());
+        command.execute(&mut Output::new(&mut out_buf, &mut err_buf), args)?;
+
+        // Redirection, otherwise write to stdout / stderr
+        if split.outs.len() > 0 {
+            redirect_to(&split.outs, &out_buf)?;
+        } else {
+            io::stdout()
+                .write_all(&out_buf)
+                .context("failed to write output")?;
+        }
+        if split.errs.len() > 0 {
+            redirect_to(&split.errs, &err_buf)?;
+        } else {
+            io::stderr()
+                .write_all(&err_buf)
+                .context("failed to write errors")?;
+        }
     }
 }
 
-fn lex_command_and_args(input: &str) -> Result<Vec<String>, String> {
+fn redirect_to(redirects: &[&str], buf: &[u8]) -> anyhow::Result<()> {
+    for r in redirects {
+        match fs::File::create(r) {
+            Ok(mut file) => {
+                let res = file.write_all(buf);
+                if res.is_err() {
+                    write_and_flush_str(
+                        &mut io::stderr(),
+                        &format!("failed to create file {r}: {}", res.unwrap_err()),
+                    )?;
+                }
+            }
+            Err(e) => {
+                write_and_flush_str(
+                    &mut io::stderr(),
+                    &format!("failed to create file {r}: {e}"),
+                )?;
+            }
+        };
+    }
+
+    Ok(())
+}
+
+struct Split<'a> {
+    cmd_args: Vec<&'a str>,
+    outs: Vec<&'a str>,
+    errs: Vec<&'a str>,
+}
+
+impl<'a> Split<'a> {
+    fn new() -> Self {
+        Self {
+            cmd_args: Vec::new(),
+            outs: Vec::new(),
+            errs: Vec::new(),
+        }
+    }
+}
+
+fn split_tokens<T: AsRef<str>>(tokens: &[T]) -> Split {
+    let mut split = Split::new();
+    let mut is_out = false;
+    let mut is_err = false;
+    for token in tokens {
+        let token = token.as_ref();
+        match token {
+            ">" | "1>" => is_out = true,
+            "2>" => is_err = true,
+            _ => {
+                if is_out {
+                    split.outs.push(token);
+                    is_out = false;
+                } else if is_err {
+                    split.errs.push(token);
+                    is_err = false;
+                } else {
+                    split.cmd_args.push(token);
+                }
+            }
+        }
+    }
+
+    split
+}
+
+fn tokenize(input: &str) -> Result<Vec<String>, String> {
     let input = input.trim();
     let mut tokens: Vec<String> = Vec::new();
     let mut next = String::new();
@@ -179,12 +271,44 @@ fn push_next_arg(
 }
 
 #[cfg(test)]
-mod lex_command_and_args_test {
-    use crate::lex_command_and_args;
+mod split_test {
+    use crate::split_tokens;
+
+    #[test]
+    fn test_only_command() {
+        let tokens = vec!["echo", "hello", "world"];
+        let split = split_tokens(&tokens);
+        assert_eq!(split.cmd_args, vec!["echo", "hello", "world"]);
+        assert!(split.outs.is_empty());
+        assert!(split.errs.is_empty());
+    }
+
+    #[test]
+    fn test_redirect() {
+        let tokens = vec!["echo", "hello", "world", ">", "/tmp/data"];
+        let split = split_tokens(&tokens);
+        assert_eq!(split.cmd_args, vec!["echo", "hello", "world"]);
+        assert_eq!(split.outs, vec!["/tmp/data"]);
+        assert!(split.errs.is_empty());
+    }
+
+    #[test]
+    fn test_multiple_redirects() {
+        let tokens = vec!["echo", "thisistest", ">", "/tmp/data", ">", "./a/b"];
+        let split = split_tokens(&tokens);
+        assert_eq!(split.cmd_args, vec!["echo", "thisistest"]);
+        assert_eq!(split.outs, vec!["/tmp/data", "./a/b"]);
+        assert!(split.errs.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tokenize_test {
+    use crate::tokenize;
 
     #[test]
     fn test_trailing_whitespace() {
-        let args = lex_command_and_args("script  shell  ");
+        let args = tokenize("script  shell  ");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script", "shell"]);
@@ -192,7 +316,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_whitespace_between() {
-        let args = lex_command_and_args("script    shell");
+        let args = tokenize("script    shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script", "shell"]);
@@ -200,7 +324,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_single_quoted() {
-        let args = lex_command_and_args("'script    shell'");
+        let args = tokenize("'script    shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["script    shell"]);
@@ -208,7 +332,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_whitespace_between_single_quoteds() {
-        let args = lex_command_and_args("' script '   ' shell '");
+        let args = tokenize("' script '   ' shell '");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![" script ", " shell "]);
@@ -216,7 +340,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_no_space_between_single_quoteds() {
-        let args = lex_command_and_args("' script''shell'");
+        let args = tokenize("' script''shell'");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![" scriptshell"]);
@@ -224,7 +348,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_no_space_between_single_quoted_and_normal() {
-        let args = lex_command_and_args("'script'shell");
+        let args = tokenize("'script'shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["scriptshell"]);
@@ -232,7 +356,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_double_quoted() {
-        let args = lex_command_and_args(r#""quz  hello"  "bar""#);
+        let args = tokenize(r#""quz  hello"  "bar""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["quz  hello", "bar"]);
@@ -240,7 +364,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_no_space_between_double_quoted_and_normal() {
-        let args = lex_command_and_args("\"script\"shell");
+        let args = tokenize("\"script\"shell");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["scriptshell"]);
@@ -248,7 +372,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_single_quoted_in_double_quoted() {
-        let args = lex_command_and_args("\"'quz''hello'\"");
+        let args = tokenize("\"'quz''hello'\"");
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec!["'quz''hello'"]);
@@ -256,7 +380,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash() {
-        let args = lex_command_and_args(r#"world\ \ \ \\\ \ \ script"#);
+        let args = tokenize(r#"world\ \ \ \\\ \ \ script"#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"world   \   script"#]);
@@ -264,7 +388,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash_in_single_quoted() {
-        let args = lex_command_and_args(r#"'example\"testhello\"shell'"#);
+        let args = tokenize(r#"'example\"testhello\"shell'"#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"example\"testhello\"shell"#]);
@@ -272,7 +396,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash_in_double_quoted() {
-        let args = lex_command_and_args(r#""hello'script'\\n'world""#);
+        let args = tokenize(r#""hello'script'\\n'world""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello'script'\n'world"#]);
@@ -280,7 +404,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash_before_quotes() {
-        let args = lex_command_and_args(r#""hello\"insidequotes"script\""#);
+        let args = tokenize(r#""hello\"insidequotes"script\""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello"insidequotesscript""#]);
@@ -288,7 +412,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash_before_newline_in_double_quoted() {
-        let args = lex_command_and_args(r#""hello'script'\\n'world""#);
+        let args = tokenize(r#""hello'script'\\n'world""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(args, vec![r#"hello'script'\n'world"#]);
@@ -296,8 +420,7 @@ mod lex_command_and_args_test {
 
     #[test]
     fn test_backslash_in_single_quoted_in_double_quoted() {
-        let args =
-            lex_command_and_args(r#""/tmp/foo/'f 46'" "/tmp/foo/'f  \80'" "/tmp/foo/'f \84\'""#);
+        let args = tokenize(r#""/tmp/foo/'f 46'" "/tmp/foo/'f  \80'" "/tmp/foo/'f \84\'""#);
         assert!(args.is_ok());
         let args = args.unwrap();
         assert_eq!(

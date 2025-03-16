@@ -55,7 +55,7 @@ impl Command {
         }
     }
 
-    pub(crate) fn execute<T, K>(&self, w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    pub(crate) fn execute<T, K>(&self, w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -75,7 +75,7 @@ impl Command {
 
     /// exit terminates the shell with specified code.
     /// If the argument is invalid, code is set to 0 instead.
-    fn exit<T, K>(_: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    fn exit<T, K>(_: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -92,7 +92,7 @@ impl Command {
     }
 
     /// echo prints the same message back.
-    fn echo<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    fn echo<T, K>(w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -104,7 +104,7 @@ impl Command {
     ///  - If command is a shell builtin: `<command> is a shell builtin`.
     ///  - If command is an executable in PATH: `<command> is <path>`.
     ///  - If command is unknown: `<command>: not found`.
-    fn type_cmd<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    fn type_cmd<T, K>(w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -125,7 +125,7 @@ impl Command {
         Ok(())
     }
 
-    fn pwd<T, K>(w: &mut Output<T, K>, _: &[String]) -> anyhow::Result<()>
+    fn pwd<T, K>(w: &mut Output<T, K>, _: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -134,7 +134,7 @@ impl Command {
         write_and_flush_buf(&mut w.out, path.into_os_string().as_encoded_bytes())
     }
 
-    fn cd<T, K>(w: &mut Output<T, K>, args: &[String]) -> anyhow::Result<()>
+    fn cd<T, K>(w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
         K: io::Write,
@@ -161,7 +161,7 @@ impl Command {
         w: &mut Output<T, K>,
         name: &str,
         path: PathBuf,
-        args: &[String],
+        args: &[&str],
     ) -> anyhow::Result<()>
     where
         T: io::Write,
