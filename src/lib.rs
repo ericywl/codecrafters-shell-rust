@@ -43,11 +43,20 @@ pub fn repl() -> anyhow::Result<()> {
         // Tokenize the input
         let tokens = match tokenize(&input) {
             Ok(tokens) => tokens,
-            Err(e) => return write_and_flush_str(&mut io::stderr(), &e),
+            Err(e) => {
+                write_and_flush_str(&mut io::stderr(), &e)?;
+                continue;
+            }
         };
 
         // Split commands and redirects
-        let split = split_tokens(tokens.as_ref());
+        let split = match split_tokens(tokens.as_ref()) {
+            Ok(s) => s,
+            Err(e) => {
+                write_and_flush_str(&mut io::stderr(), &e)?;
+                continue;
+            }
+        };
 
         // Parse command and execute with arguments
         let (command, args) = match split.cmd_args.split_first() {
@@ -62,14 +71,22 @@ pub fn repl() -> anyhow::Result<()> {
         // Redirection, otherwise write to stdout / stderr
         if split.outs.len() > 0 {
             redirect_to(&split.outs, &out_buf)?;
-        } else {
+        }
+        if split.append_outs.len() > 0 {
+            append_to(&split.append_outs, &out_buf)?;
+        }
+        if split.outs.len() == 0 && split.append_outs.len() == 0 {
             io::stdout()
                 .write_all(&out_buf)
                 .context("failed to write output")?;
         }
         if split.errs.len() > 0 {
             redirect_to(&split.errs, &err_buf)?;
-        } else {
+        }
+        if split.append_errs.len() > 0 {
+            append_to(&split.append_errs, &err_buf)?;
+        }
+        if split.errs.len() == 0 && split.append_errs.len() == 0 {
             io::stderr()
                 .write_all(&err_buf)
                 .context("failed to write errors")?;
@@ -85,15 +102,39 @@ fn redirect_to(redirects: &[&str], buf: &[u8]) -> anyhow::Result<()> {
                 if res.is_err() {
                     write_and_flush_str(
                         &mut io::stderr(),
-                        &format!("failed to create file {r}: {}", res.unwrap_err()),
+                        &format!("failed to write to file {r}: {}", res.unwrap_err()),
+                    )?;
+                }
+            }
+            Err(e) => write_and_flush_str(
+                &mut io::stderr(),
+                &format!("failed to create file {r}: {e}"),
+            )?,
+        };
+    }
+
+    Ok(())
+}
+
+fn append_to(appends: &[&str], buf: &[u8]) -> anyhow::Result<()> {
+    for a in appends {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(a)
+        {
+            Ok(mut file) => {
+                let res = file.write_all(buf);
+                if res.is_err() {
+                    write_and_flush_str(
+                        &mut io::stderr(),
+                        &format!("failed to append to file {a}: {}", res.unwrap_err()),
                     )?;
                 }
             }
             Err(e) => {
-                write_and_flush_str(
-                    &mut io::stderr(),
-                    &format!("failed to create file {r}: {e}"),
-                )?;
+                write_and_flush_str(&mut io::stderr(), &format!("failed to open file {a}: {e}"))?
             }
         };
     }
@@ -104,7 +145,9 @@ fn redirect_to(redirects: &[&str], buf: &[u8]) -> anyhow::Result<()> {
 struct Split<'a> {
     cmd_args: Vec<&'a str>,
     outs: Vec<&'a str>,
+    append_outs: Vec<&'a str>,
     errs: Vec<&'a str>,
+    append_errs: Vec<&'a str>,
 }
 
 impl<'a> Split<'a> {
@@ -112,35 +155,57 @@ impl<'a> Split<'a> {
         Self {
             cmd_args: Vec::new(),
             outs: Vec::new(),
+            append_outs: Vec::new(),
             errs: Vec::new(),
+            append_errs: Vec::new(),
         }
     }
 }
 
-fn split_tokens<T: AsRef<str>>(tokens: &[T]) -> Split {
+enum Redirect {
+    Out,
+    AppendOut,
+    Err,
+    AppendErr,
+}
+
+fn split_tokens<T: AsRef<str>>(tokens: &[T]) -> Result<Split, String> {
     let mut split = Split::new();
-    let mut is_out = false;
-    let mut is_err = false;
+    let mut redirect: Option<Redirect> = None;
+
     for token in tokens {
         let token = token.as_ref();
         match token {
-            ">" | "1>" => is_out = true,
-            "2>" => is_err = true,
-            _ => {
-                if is_out {
-                    split.outs.push(token);
-                    is_out = false;
-                } else if is_err {
-                    split.errs.push(token);
-                    is_err = false;
-                } else {
-                    split.cmd_args.push(token);
+            // Two redirects at once, which is invalid.
+            "1>" | ">" | "1>>" | ">>" | "2>" | "2>>" => {
+                if redirect.is_some() {
+                    return Err(format!("parse error near {token}"));
                 }
+            }
+            _ => (),
+        }
+
+        match token {
+            "1>" | ">" => redirect = Some(Redirect::Out),
+            "1>>" | ">>" => redirect = Some(Redirect::AppendOut),
+            "2>" => redirect = Some(Redirect::Err),
+            "2>>" => redirect = Some(Redirect::AppendErr),
+            _ => {
+                match redirect {
+                    Some(r) => match r {
+                        Redirect::Out => split.outs.push(token),
+                        Redirect::AppendOut => split.append_outs.push(token),
+                        Redirect::Err => split.errs.push(token),
+                        Redirect::AppendErr => split.append_errs.push(token),
+                    },
+                    None => split.cmd_args.push(token),
+                }
+                redirect = None;
             }
         }
     }
 
-    split
+    Ok(split)
 }
 
 fn tokenize(input: &str) -> Result<Vec<String>, String> {
@@ -277,28 +342,74 @@ mod split_test {
     #[test]
     fn test_only_command() {
         let tokens = vec!["echo", "hello", "world"];
-        let split = split_tokens(&tokens);
+        let split = split_tokens(&tokens).unwrap();
         assert_eq!(split.cmd_args, vec!["echo", "hello", "world"]);
         assert!(split.outs.is_empty());
+        assert!(split.append_outs.is_empty());
         assert!(split.errs.is_empty());
+        assert!(split.append_errs.is_empty());
     }
 
     #[test]
-    fn test_redirect() {
+    fn test_redirect_out() {
         let tokens = vec!["echo", "hello", "world", ">", "/tmp/data"];
-        let split = split_tokens(&tokens);
+        let split = split_tokens(&tokens).unwrap();
         assert_eq!(split.cmd_args, vec!["echo", "hello", "world"]);
         assert_eq!(split.outs, vec!["/tmp/data"]);
+        assert!(split.append_outs.is_empty());
         assert!(split.errs.is_empty());
+        assert!(split.append_errs.is_empty());
     }
 
     #[test]
-    fn test_multiple_redirects() {
+    fn test_multiple_redirect_outs() {
         let tokens = vec!["echo", "thisistest", ">", "/tmp/data", ">", "./a/b"];
-        let split = split_tokens(&tokens);
+        let split = split_tokens(&tokens).unwrap();
         assert_eq!(split.cmd_args, vec!["echo", "thisistest"]);
         assert_eq!(split.outs, vec!["/tmp/data", "./a/b"]);
+        assert!(split.append_outs.is_empty());
         assert!(split.errs.is_empty());
+        assert!(split.append_errs.is_empty());
+    }
+
+    #[test]
+    fn test_mutliple_redirect_errs() {
+        let tokens = vec![
+            "echo",
+            "big bad error",
+            "2>",
+            "./error.log",
+            "2>",
+            "./warn.log",
+        ];
+        let split = split_tokens(&tokens).unwrap();
+        assert_eq!(split.cmd_args, vec!["echo", "big bad error"]);
+        assert!(split.outs.is_empty());
+        assert!(split.append_outs.is_empty());
+        assert_eq!(split.errs, vec!["./error.log", "./warn.log"]);
+        assert!(split.append_errs.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_redirect() {
+        let tokens = vec![
+            "cat",
+            "./something.txt",
+            ">",
+            "/tmp/data",
+            ">>",
+            "/tmp/extra_data",
+            "2>",
+            "./error.log",
+            "2>>",
+            "dump",
+        ];
+        let split = split_tokens(&tokens).unwrap();
+        assert_eq!(split.cmd_args, vec!["cat", "./something.txt"]);
+        assert_eq!(split.outs, vec!["/tmp/data"]);
+        assert_eq!(split.append_outs, vec!["/tmp/extra_data"]);
+        assert_eq!(split.errs, vec!["./error.log"]);
+        assert_eq!(split.append_errs, vec!["dump"]);
     }
 }
 
