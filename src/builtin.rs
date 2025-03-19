@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use strum::EnumString;
 
-use crate::{write_and_flush_buf, write_and_flush_str};
+use crate::util::{write_and_flush_buf, write_and_flush_str};
 
 #[derive(Debug, PartialEq, EnumString)]
 pub(crate) enum Command {

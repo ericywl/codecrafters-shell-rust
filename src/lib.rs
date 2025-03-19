@@ -1,50 +1,20 @@
-use std::{
-    fs,
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use anyhow::Context;
 use builtin::Output;
 
 mod builtin;
-
-fn write_and_flush_buf<T: io::Write>(w: &mut T, buf: &[u8]) -> anyhow::Result<()> {
-    let mut buf = buf.to_owned();
-    buf.push(b'\n');
-
-    w.write_all(&buf).context("failed to write output")?;
-    w.flush().context("failed to flush output")
-}
-
-fn write_and_flush_str<T: io::Write>(w: &mut T, s: &str) -> anyhow::Result<()> {
-    write_and_flush_buf(w, s.as_bytes())
-}
-
-fn prompt_and_read() -> anyhow::Result<String> {
-    let mut stdout = io::stdout();
-    stdout
-        .write_all("$ ".as_bytes())
-        .context("failed to write prompt")?;
-    stdout.flush().context("failed to flush prompt")?;
-
-    // Wait for user input
-    let stdin = io::stdin();
-    let mut input = String::new();
-    stdin
-        .read_line(&mut input)
-        .context("failed to read input")?;
-    Ok(input)
-}
+mod util;
 
 pub fn repl() -> anyhow::Result<()> {
     loop {
-        let input = prompt_and_read()?;
+        let input = util::prompt_and_read()?;
 
         // Tokenize the input
         let tokens = match tokenize(&input) {
             Ok(tokens) => tokens,
             Err(e) => {
-                write_and_flush_str(&mut io::stderr(), &e)?;
+                util::write_and_flush_str(&mut io::stderr(), &e)?;
                 continue;
             }
         };
@@ -53,7 +23,7 @@ pub fn repl() -> anyhow::Result<()> {
         let split = match split_tokens(tokens.as_ref()) {
             Ok(s) => s,
             Err(e) => {
-                write_and_flush_str(&mut io::stderr(), &e)?;
+                util::write_and_flush_str(&mut io::stderr(), &e)?;
                 continue;
             }
         };
@@ -69,74 +39,32 @@ pub fn repl() -> anyhow::Result<()> {
         command.execute(&mut Output::new(&mut out_buf, &mut err_buf), args)?;
 
         // Redirection, otherwise write to stdout / stderr
-        if split.outs.len() > 0 {
-            redirect_to(&split.outs, &out_buf)?;
-        }
-        if split.append_outs.len() > 0 {
-            append_to(&split.append_outs, &out_buf)?;
-        }
-        if split.outs.len() == 0 && split.append_outs.len() == 0 {
-            io::stdout()
-                .write_all(&out_buf)
-                .context("failed to write output")?;
-        }
-        if split.errs.len() > 0 {
-            redirect_to(&split.errs, &err_buf)?;
-        }
-        if split.append_errs.len() > 0 {
-            append_to(&split.append_errs, &err_buf)?;
-        }
-        if split.errs.len() == 0 && split.append_errs.len() == 0 {
-            io::stderr()
-                .write_all(&err_buf)
-                .context("failed to write errors")?;
-        }
+        redirect_and_append(split, &out_buf, &err_buf)?;
     }
 }
 
-fn redirect_to(redirects: &[&str], buf: &[u8]) -> anyhow::Result<()> {
-    for r in redirects {
-        match fs::File::create(r) {
-            Ok(mut file) => {
-                let res = file.write_all(buf);
-                if res.is_err() {
-                    write_and_flush_str(
-                        &mut io::stderr(),
-                        &format!("failed to write to file {r}: {}", res.unwrap_err()),
-                    )?;
-                }
-            }
-            Err(e) => write_and_flush_str(
-                &mut io::stderr(),
-                &format!("failed to create file {r}: {e}"),
-            )?,
-        };
+fn redirect_and_append(split: Split<'_>, out_buf: &[u8], err_buf: &[u8]) -> anyhow::Result<()> {
+    if split.outs.len() > 0 {
+        util::redirect_to(&split.outs, &out_buf)?;
     }
-
-    Ok(())
-}
-
-fn append_to(appends: &[&str], buf: &[u8]) -> anyhow::Result<()> {
-    for a in appends {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(a)
-        {
-            Ok(mut file) => {
-                let res = file.write_all(buf);
-                if res.is_err() {
-                    write_and_flush_str(
-                        &mut io::stderr(),
-                        &format!("failed to append to file {a}: {}", res.unwrap_err()),
-                    )?;
-                }
-            }
-            Err(e) => {
-                write_and_flush_str(&mut io::stderr(), &format!("failed to open file {a}: {e}"))?
-            }
-        };
+    if split.append_outs.len() > 0 {
+        util::append_to(&split.append_outs, &out_buf)?;
+    }
+    if split.outs.len() == 0 && split.append_outs.len() == 0 {
+        io::stdout()
+            .write_all(&out_buf)
+            .context("failed to write output")?;
+    }
+    if split.errs.len() > 0 {
+        util::redirect_to(&split.errs, &err_buf)?;
+    }
+    if split.append_errs.len() > 0 {
+        util::append_to(&split.append_errs, &err_buf)?;
+    }
+    if split.errs.len() == 0 && split.append_errs.len() == 0 {
+        io::stderr()
+            .write_all(&err_buf)
+            .context("failed to write errors")?;
     }
 
     Ok(())
