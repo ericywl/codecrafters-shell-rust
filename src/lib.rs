@@ -75,11 +75,12 @@ impl rustyline::completion::Completer for ShellCompleter {
         _: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
         let words = builtin::Command::available_commands();
-        let completions = words
+        let mut completions: Vec<String> = words
             .iter()
             .filter(|w| w.starts_with(line))
             .map(|s| s.to_string())
             .collect();
+        completions.sort();
         Ok((0, completions))
     }
 }
