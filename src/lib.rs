@@ -14,10 +14,11 @@ pub fn repl() -> anyhow::Result<()> {
     rl.set_helper(Some(helper));
 
     loop {
-        let input = util::prompt_and_readline(&mut rl)?;
-        if input.is_empty() {
-            continue;
-        }
+        // Read input
+        let input = match util::prompt_and_readline(&mut rl)? {
+            Some(input) => input,
+            None => return Ok(()),
+        };
 
         // Tokenize the input
         let tokens = match tokenize(&input) {
@@ -69,7 +70,7 @@ impl rustyline::completion::Completer for ShellCompleter {
         _: usize,
         _: &rustyline::Context<'_>,
     ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
-        let words = ["echo", "type", "exit", "pwd", "cd"];
+        let words = builtin::Command::available_commands();
         let completions = words
             .iter()
             .filter(|w| w.starts_with(line))

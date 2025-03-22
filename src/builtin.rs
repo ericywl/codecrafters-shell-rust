@@ -55,6 +55,18 @@ impl Command {
         }
     }
 
+    pub(crate) fn available_commands() -> Vec<String> {
+        let mut words: Vec<String> = vec![
+            "echo".to_string(),
+            "type".to_string(),
+            "exit".to_string(),
+            "pwd".to_string(),
+            "cd".to_string(),
+        ];
+        words.extend(Self::all_executables());
+        words
+    }
+
     pub(crate) fn execute<T, K>(&self, w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
     where
         T: io::Write,
@@ -225,6 +237,42 @@ impl Command {
         }
 
         None
+    }
+
+    fn all_executables() -> Vec<String> {
+        let mut executables = vec![];
+        let path_env_var = env::var("PATH");
+        if path_env_var.is_err() {
+            return executables;
+        }
+
+        let path_env_var = path_env_var.unwrap();
+        let splits = path_env_var.split(":");
+
+        for p in splits {
+            let entries = match fs::read_dir(p) {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+
+            for entry in entries {
+                let path = match entry {
+                    Ok(entry) => entry.path(),
+                    Err(_) => continue,
+                };
+
+                if !path.is_file() {
+                    continue;
+                }
+
+                match path.file_name() {
+                    Some(filename) => executables.push(filename.to_str().unwrap().to_string()),
+                    None => continue,
+                }
+            }
+        }
+
+        executables
     }
 
     fn home_dir() -> String {

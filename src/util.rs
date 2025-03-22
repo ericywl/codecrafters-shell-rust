@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rustyline::error::ReadlineError;
+use rustyline::{error::ReadlineError, Editor};
 
 pub(crate) fn write_and_flush_buf<T: io::Write>(w: &mut T, buf: &[u8]) -> anyhow::Result<()> {
     let mut buf = buf.to_owned();
@@ -18,7 +18,7 @@ pub(crate) fn write_and_flush_str<T: io::Write>(w: &mut T, s: &str) -> anyhow::R
     write_and_flush_buf(w, s.as_bytes())
 }
 
-pub(crate) fn prompt_and_readline<H, I>(rl: &mut rustyline::Editor<H, I>) -> anyhow::Result<String>
+pub(crate) fn prompt_and_readline<H, I>(rl: &mut Editor<H, I>) -> anyhow::Result<Option<String>>
 where
     H: rustyline::Helper,
     I: rustyline::history::History,
@@ -27,13 +27,17 @@ where
     let input = match readline {
         Ok(line) => line,
         Err(ReadlineError::Interrupted) => {
-            return Ok("".into());
+            write_and_flush_str(&mut io::stdout(), "<CTRL-C>")?;
+            return Ok(None);
         }
-        Err(ReadlineError::Eof) => return Err(anyhow::anyhow!("<CTRL-D>")),
+        Err(ReadlineError::Eof) => {
+            write_and_flush_str(&mut io::stdout(), "<CTRL-D>")?;
+            return Ok(None);
+        }
         Err(err) => return Err(anyhow::anyhow!("failed to readline: {}", err)),
     };
 
-    Ok(input)
+    Ok(Some(input))
 }
 
 pub(crate) fn redirect_to(redirects: &[&str], buf: &[u8]) -> anyhow::Result<()> {
