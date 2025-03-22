@@ -2,13 +2,22 @@ use std::io::{self, Write};
 
 use anyhow::Context;
 use builtin::Output;
+use rustyline::{Completer, Helper, Highlighter, Hinter, Validator};
 
 mod builtin;
 mod util;
 
 pub fn repl() -> anyhow::Result<()> {
+    let completer = ShellCompleter;
+    let helper = ShellHelper { completer };
+    let mut rl = rustyline::Editor::new().context("failed to create new rustyline editor")?;
+    rl.set_helper(Some(helper));
+
     loop {
-        let input = util::prompt_and_read()?;
+        let input = util::prompt_and_readline(&mut rl)?;
+        if input.is_empty() {
+            continue;
+        }
 
         // Tokenize the input
         let tokens = match tokenize(&input) {
@@ -40,6 +49,33 @@ pub fn repl() -> anyhow::Result<()> {
 
         // Redirection, otherwise write to stdout / stderr
         redirect_and_append(split, &out_buf, &err_buf)?;
+    }
+}
+
+#[derive(Completer, Helper, Highlighter, Hinter, Validator)]
+struct ShellHelper {
+    #[rustyline(Completer)]
+    completer: ShellCompleter,
+}
+
+struct ShellCompleter;
+
+impl rustyline::completion::Completer for ShellCompleter {
+    type Candidate = String;
+
+    fn complete(
+        &self,
+        line: &str,
+        _: usize,
+        _: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Self::Candidate>)> {
+        let words = ["echo", "type", "exit", "pwd", "cd"];
+        let completions = words
+            .iter()
+            .filter(|w| w.starts_with(line))
+            .map(|s| s.to_string() + " ")
+            .collect();
+        Ok((0, completions))
     }
 }
 

@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rustyline::error::ReadlineError;
 
 pub(crate) fn write_and_flush_buf<T: io::Write>(w: &mut T, buf: &[u8]) -> anyhow::Result<()> {
     let mut buf = buf.to_owned();
@@ -17,19 +18,21 @@ pub(crate) fn write_and_flush_str<T: io::Write>(w: &mut T, s: &str) -> anyhow::R
     write_and_flush_buf(w, s.as_bytes())
 }
 
-pub(crate) fn prompt_and_read() -> anyhow::Result<String> {
-    let mut stdout = io::stdout();
-    stdout
-        .write_all("$ ".as_bytes())
-        .context("failed to write prompt")?;
-    stdout.flush().context("failed to flush prompt")?;
+pub(crate) fn prompt_and_readline<H, I>(rl: &mut rustyline::Editor<H, I>) -> anyhow::Result<String>
+where
+    H: rustyline::Helper,
+    I: rustyline::history::History,
+{
+    let readline = rl.readline("$ ");
+    let input = match readline {
+        Ok(line) => line,
+        Err(ReadlineError::Interrupted) => {
+            return Ok("".into());
+        }
+        Err(ReadlineError::Eof) => return Err(anyhow::anyhow!("<CTRL-D>")),
+        Err(err) => return Err(anyhow::anyhow!("failed to readline: {}", err)),
+    };
 
-    // Wait for user input
-    let stdin = io::stdin();
-    let mut input = String::new();
-    stdin
-        .read_line(&mut input)
-        .context("failed to read input")?;
     Ok(input)
 }
 
