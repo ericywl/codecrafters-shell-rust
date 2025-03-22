@@ -80,7 +80,11 @@ impl rustyline::completion::Completer for ShellCompleter {
             .filter(|w| w.starts_with(line))
             .map(|s| s.to_string())
             .collect();
+
         completions.sort();
+        if completions.len() == 1 {
+            completions = completions.iter().map(|s| s.to_string() + " ").collect()
+        }
         Ok((0, completions))
     }
 }
