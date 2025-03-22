@@ -28,7 +28,7 @@ where
         Ok(line) => line,
         Err(ReadlineError::Interrupted) => {
             write_and_flush_str(&mut io::stdout(), "<CTRL-C>")?;
-            return Ok(None);
+            return Ok(Some("".to_string()));
         }
         Err(ReadlineError::Eof) => {
             write_and_flush_str(&mut io::stdout(), "<CTRL-D>")?;

@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use anyhow::Context;
 use builtin::Output;
-use rustyline::{Completer, Helper, Highlighter, Hinter, Validator};
+use rustyline::{config::Configurer, Completer, Helper, Highlighter, Hinter, Validator};
 
 mod builtin;
 mod util;
@@ -12,6 +12,7 @@ pub fn repl() -> anyhow::Result<()> {
     let helper = ShellHelper { completer };
     let mut rl = rustyline::Editor::new().context("failed to create new rustyline editor")?;
     rl.set_helper(Some(helper));
+    rl.set_completion_type(rustyline::CompletionType::List);
 
     loop {
         // Read input
@@ -19,6 +20,9 @@ pub fn repl() -> anyhow::Result<()> {
             Some(input) => input,
             None => return Ok(()),
         };
+        if input.is_empty() {
+            continue;
+        }
 
         // Tokenize the input
         let tokens = match tokenize(&input) {
@@ -74,7 +78,7 @@ impl rustyline::completion::Completer for ShellCompleter {
         let completions = words
             .iter()
             .filter(|w| w.starts_with(line))
-            .map(|s| s.to_string() + " ")
+            .map(|s| s.to_string())
             .collect();
         Ok((0, completions))
     }

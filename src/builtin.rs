@@ -1,5 +1,5 @@
 use std::{
-    env, fs, io,
+    collections, env, fs, io,
     path::PathBuf,
     process::{self},
 };
@@ -56,15 +56,16 @@ impl Command {
     }
 
     pub(crate) fn available_commands() -> Vec<String> {
-        let mut words: Vec<String> = vec![
+        let mut set = collections::HashSet::new();
+        set.extend(vec![
             "echo".to_string(),
             "type".to_string(),
             "exit".to_string(),
             "pwd".to_string(),
             "cd".to_string(),
-        ];
-        words.extend(Self::all_executables());
-        words
+        ]);
+        set.extend(Self::all_executables());
+        set.into_iter().collect()
     }
 
     pub(crate) fn execute<T, K>(&self, w: &mut Output<T, K>, args: &[&str]) -> anyhow::Result<()>
